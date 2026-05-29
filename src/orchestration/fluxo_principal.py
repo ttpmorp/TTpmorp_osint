@@ -196,6 +196,71 @@ def salvar_no_banco_empresa(dados_empresa: dict):
 
 
 @task
+def exibir_detalhes_cnpj(dados: dict):
+    """Exibe um relatório completo e formatado dos dados de CNPJ retornados pela Brasil API."""
+    if not dados:
+        return
+    sep = "=" * 60
+    print(f"\n{sep}")
+    print(" 🏢  RELATÓRIO COMPLETO - CNPJ")
+    print(sep)
+    print(f"  CNPJ                : {dados.get('cnpj', 'N/A')}")
+    print(f"  Razão Social        : {dados.get('razao_social', 'N/A')}")
+    print(f"  Nome Fantasia       : {dados.get('nome_fantasia') or 'N/A'}")
+    print(f"  Situação Cadastral  : {dados.get('descricao_situacao_cadastral', 'N/A')}")
+    print(f"  Data Abertura       : {dados.get('data_inicio_atividade', 'N/A')}")
+    print(f"  Natureza Jurídica   : {dados.get('natureza_juridica', 'N/A')}")
+    print(f"  Porte               : {dados.get('porte', 'N/A')}")
+    print(f"  Capital Social      : R$ {dados.get('capital_social', 0):,.2f}")
+    print(f"  Tipo                : {dados.get('descricao_identificador_matriz_filial', 'N/A')}")
+
+    print(f"\n  --- ENDEREÇO ---")
+    logr = f"{dados.get('descricao_tipo_de_logradouro', '')} {dados.get('logradouro', '')}, {dados.get('numero', '')}"
+    print(f"  Logradouro          : {logr.strip()}")
+    if dados.get('complemento'):
+        print(f"  Complemento         : {dados.get('complemento')}")
+    print(f"  Bairro              : {dados.get('bairro', 'N/A')}")
+    print(f"  Município / UF      : {dados.get('municipio', 'N/A')} / {dados.get('uf', 'N/A')}")
+    print(f"  CEP                 : {dados.get('cep', 'N/A')}")
+
+    print(f"\n  --- CONTATO ---")
+    print(f"  Telefone 1          : {dados.get('ddd_telefone_1') or 'N/A'}")
+    print(f"  Telefone 2          : {dados.get('ddd_telefone_2') or 'N/A'}")
+    print(f"  E-mail              : {dados.get('email') or 'N/A'}")
+
+    print(f"\n  --- ATIVIDADE ECONÔMICA ---")
+    print(f"  CNAE Principal      : {dados.get('cnae_fiscal', 'N/A')} - {dados.get('cnae_fiscal_descricao', 'N/A')}")
+    cnaes_sec = dados.get('cnaes_secundarios', [])
+    if cnaes_sec:
+        print(f"  CNAEs Secundários   :")
+        for cnae in cnaes_sec:
+            print(f"    - {cnae.get('codigo')} - {cnae.get('descricao')}")
+
+    print(f"\n  --- REGIME TRIBUTÁRIO ---")
+    regimes = dados.get('regime_tributario', [])
+    if regimes:
+        for r in regimes:
+            print(f"    {r.get('ano')}: {r.get('forma_de_tributacao')}")
+    else:
+        simples = "Sim" if dados.get('opcao_pelo_simples') else "Não"
+        mei = "Sim" if dados.get('opcao_pelo_mei') else "Não"
+        print(f"  Simples Nacional    : {simples}")
+        print(f"  MEI                 : {mei}")
+
+    print(f"\n  --- QUADRO SOCIETÁRIO (QSA) ---")
+    qsa = dados.get('qsa', [])
+    if qsa:
+        for i, socio in enumerate(qsa, 1):
+            print(f"  [{i}] {socio.get('nome_socio', 'N/A')}")
+            print(f"       Qualificação : {socio.get('qualificacao_socio', 'N/A')}")
+            print(f"       Faixa Etária : {socio.get('faixa_etaria', 'N/A')}")
+            print(f"       Desde        : {socio.get('data_entrada_sociedade', 'N/A')}")
+    else:
+        print("  Nenhum sócio encontrado.")
+    print(sep + "\n")
+
+
+@task
 def exibir_dossie_links(nome_pessoa: str, cnpjs: list = None):
     print(f"\n{'='*40}\n[+] Dossiê de Links Rápidos para Investigação Manual\n{'='*40}")
     catalogo = CatalogoFontesOSINT()
@@ -245,7 +310,9 @@ def pipeline_osint_empresa(cnpj: str):
     if not dados_empresa:
         print("[-] Nenhum dado de empresa encontrado. Encerrando pipeline.")
         return
-        
+    
+    # Exibe relatório completo antes de salvar
+    exibir_detalhes_cnpj(dados_empresa)
     salvar_no_banco_empresa(dados_empresa)
     
     # Exibe dossiê de links para a empresa
@@ -264,17 +331,63 @@ BANNER_OSINT = r"""
                                                                                                       
 """
 
-if __name__ == "__main__":
+def menu_interativo():
     print(BANNER_OSINT)
-    import argparse
-    parser = argparse.ArgumentParser(description="Executar PoC do Pipeline OSINT")
-    parser.add_argument("--pessoa", type=str, help="Nome da pessoa a pesquisar (ex: 'Albert Einstein')")
-    parser.add_argument("--cnpj", type=str, help="CNPJ da empresa a pesquisar (apenas números)")
-    args = parser.parse_args()
     
-    if args.pessoa:
-        pipeline_osint_pessoa(args.pessoa)
-    elif args.cnpj:
-        pipeline_osint_empresa(args.cnpj)
+    while True:
+        print("\n" + "="*50)
+        print(" 🕵️‍♂️  SISTEMA OSINT AVANÇADO - MODO INTERATIVO")
+        print("="*50 + "\n")
+        print("Selecione o tipo de entidade que deseja investigar:")
+        print("  [ 1 ] Pessoa Física (Busca por Nome)")
+        print("  [ 2 ] Empresa (Busca por CNPJ)")
+        print("  [ 0 ] Sair")
+        
+        escolha = input("\n> Digite o número da sua escolha: ").strip()
+        
+        if escolha == '1':
+            nome = input("\n> Digite o Nome da pessoa (ex: 'Albert Einstein'): ").strip()
+            if nome:
+                pipeline_osint_pessoa(nome)
+            else:
+                print("[-] O nome não pode ser vazio.")
+        elif escolha == '2':
+            cnpj = input("\n> Digite o CNPJ da empresa (apenas números): ").strip()
+            if cnpj:
+                pipeline_osint_empresa(cnpj)
+            else:
+                print("[-] O CNPJ não pode ser vazio.")
+        elif escolha == '0':
+            print("\nSaindo do sistema. Até a próxima investigação! 👋")
+            break
+        else:
+            print("\n[-] Escolha inválida. Tente novamente.")
+            continue
+        
+        # Após qualquer pesquisa concluída, pergunta se quer continuar
+        nova = input("\n🔄 Deseja fazer uma nova pesquisa? (s/n): ").strip().lower()
+        if nova != 's':
+            print("\nEncerrando o sistema. Até a próxima investigação! 👋")
+            break
+
+if __name__ == "__main__":
+    import sys
+    import argparse
+    
+    # Se argumentos foram passados na linha de comando, usa o modo CLI
+    if len(sys.argv) > 1:
+        print(BANNER_OSINT)
+        parser = argparse.ArgumentParser(description="Executar PoC do Pipeline OSINT")
+        parser.add_argument("--pessoa", type=str, help="Nome da pessoa a pesquisar")
+        parser.add_argument("--cnpj", type=str, help="CNPJ da empresa a pesquisar (apenas números)")
+        args = parser.parse_args()
+        
+        if args.pessoa:
+            pipeline_osint_pessoa(args.pessoa)
+        elif args.cnpj:
+            pipeline_osint_empresa(args.cnpj)
+        else:
+            print("Por favor, forneça --pessoa 'Nome' ou --cnpj 'Numero'")
     else:
-        print("Por favor, forneça --pessoa 'Nome' ou --cnpj 'Numero'")
+        # Se nenhum argumento foi passado, abre o modo interativo
+        menu_interativo()
