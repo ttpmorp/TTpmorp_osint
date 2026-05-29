@@ -1,0 +1,8 @@
+requests==2.31.0
+beautifulsoup4==4.12.3
+selenium==4.18.1
+spacy==3.7.4
+SQLAlchemy==2.0.29
+psycopg2-binary==2.9.9
+prefect==2.19.0
+python-dotenv==1.0.1
