@@ -8,6 +8,7 @@ from prefect import flow, task
 from src.collectors.coletor_academico import ColetorAcademico
 from src.collectors.coletor_brasil_api import ColetorBrasilAPI
 from src.collectors.coletor_transparencia_cgu import ColetorTransparenciaCGU
+from src.collectors.coletor_redes_sociais import ColetorRedesSociais
 from src.collectors.catalogo_fontes import CatalogoFontesOSINT
 from src.processing.extrator_nlp import ExtratorNLP
 from src.processing.anonimizador import Anonimizador
@@ -202,7 +203,7 @@ def exibir_detalhes_cnpj(dados: dict):
         return
     sep = "=" * 60
     print(f"\n{sep}")
-    print(" 🏢  RELATÓRIO COMPLETO - CNPJ")
+    print("   RELATÓRIO COMPLETO - CNPJ")
     print(sep)
     print(f"  CNPJ                : {dados.get('cnpj', 'N/A')}")
     print(f"  Razão Social        : {dados.get('razao_social', 'N/A')}")
@@ -320,15 +321,119 @@ def pipeline_osint_empresa(cnpj: str):
     
     print("\n[+] Execução do pipeline de empresa concluída.")
 
+
+# ======================================================================
+#  Pipeline OSINT - Busca por Nome de Usuário (Redes Sociais)
+# ======================================================================
+
+@task(retries=2, retry_delay_seconds=5)
+def coletar_redes_sociais(usuario: str) -> list:
+    print(f"[*] Verificando redes sociais para o usuário: @{usuario}")
+    coletor = ColetorRedesSociais()
+    resultados = coletor.verificar_usuario(usuario)
+    return resultados
+
+@task
+def salvar_no_banco_usuario(usuario: str, resultados: list):
+    print("[*] Salvando resultados de redes sociais no banco...")
+    db = ClienteBD()
+    db.iniciar_bd()
+    sessao = db.obter_sessao()
+
+    try:
+        pessoa = sessao.query(Pessoa).filter_by(nome=f"@{usuario}").first()
+        if not pessoa:
+            pessoa = Pessoa(nome=f"@{usuario}", metadados_json={"tipo": "usuario"})
+            sessao.add(pessoa)
+            sessao.flush()
+
+        relacoes_existentes = {(r.tipo_entidade, r.nome_entidade) for r in pessoa.relacoes}
+
+        for r in resultados:
+            if r["encontrado"]:
+                tipo = "REDE_SOCIAL"
+                nome_ent = f"{r['plataforma']} - {r['url']}"
+                if (tipo, nome_ent) not in relacoes_existentes:
+                    rel = RelacaoEntidade(
+                        pessoa_id=pessoa.id,
+                        tipo_entidade=tipo,
+                        nome_entidade=nome_ent,
+                    )
+                    sessao.add(rel)
+                    relacoes_existentes.add((tipo, nome_ent))
+
+        sessao.commit()
+        print(f"[+] Resultados de @{usuario} salvos no banco. Pessoa ID: {pessoa.id}")
+        return pessoa.id
+    except Exception as e:
+        sessao.rollback()
+        print(f"[-] Erro no Banco de Dados: {e}")
+        return None
+    finally:
+        sessao.close()
+
+@task
+def exibir_relatorio_redes_sociais(usuario: str, resultados: list):
+    """Exibe um relatório formatado das redes sociais encontradas."""
+    sep = "=" * 60
+    print(f"\n{sep}")
+    print(f"   RELATÓRIO DE REDES SOCIAIS - @{usuario}")
+    print(sep)
+
+    encontrados = [r for r in resultados if r["encontrado"]]
+    nao_encontrados = [r for r in resultados if not r["encontrado"]]
+
+    print(f"\n  Total verificado : {len(resultados)}")
+    print(f"  Encontrados      : {len(encontrados)}")
+    print(f"  Não encontrados  : {len(nao_encontrados)}")
+
+    if encontrados:
+        print(f"\n  --- PERFIS ENCONTRADOS ---")
+        for i, r in enumerate(encontrados, 1):
+            print(f"  [{i:>2}] {r['plataforma']:<20} {r['url']}")
+    else:
+        print("\n  Nenhum perfil encontrado.")
+
+    print(f"\n{sep}\n")
+
+@task
+def exibir_dossie_links_usuario(usuario: str):
+    """Exibe links de investigação manual para o nome de usuário."""
+    print(f"\n{'='*40}")
+    print(f"[+] Dossiê de Links Rápidos para o Usuário @{usuario}")
+    print(f"{'='*40}")
+    catalogo = CatalogoFontesOSINT()
+    links = catalogo.gerar_dossie_links("USUARIO", usuario)
+    for link in links:
+        print(link)
+    print("="*40)
+
+@flow(name="Pipeline-OSINT-Usuario")
+def pipeline_osint_usuario(usuario: str):
+    usuario = usuario.strip().lstrip("@")
+    print(f"\n{'='*40}")
+    print(f"Iniciando Pipeline OSINT para Usuário: @{usuario}")
+    print(f"{'='*40}")
+
+    resultados = coletar_redes_sociais(usuario)
+    salvar_no_banco_usuario(usuario, resultados)
+    exibir_relatorio_redes_sociais(usuario, resultados)
+    exibir_dossie_links_usuario(usuario)
+
+    print("\n[+] Execução do pipeline de usuário concluída.")
+
 BANNER_OSINT = r"""
- [... [......[... [......[.......  [..       [..    [....     [.......    [.......  
-     [..         [..    [..    [..[. [..   [...  [..    [..  [..    [..  [..    [..
-     [..         [..    [..    [..[.. [.. [ [..[..        [..[..    [..  [..    [..
-     [..         [..    [.......  [..  [..  [..[..        [..[. [..      [.......  
-     [..         [..    [..       [..   [.  [..[..        [..[..  [..    [..       
-     [..         [..    [..       [..       [..  [..     [.. [..    [..  [..       
-     [..         [..    [..       [..       [..    [....     [..      [..[..       
-                                                                                                      
+$$$$$$$$\ $$$$$$$$\                                                    
+\__$$  __|\__$$  __|                                                   
+   $$ |      $$ | $$$$$$\  $$$$$$\$$$$\   $$$$$$\   $$$$$$\   $$$$$$\  
+   $$ |      $$ |$$  __$$\ $$  _$$  _$$\ $$  __$$\ $$  __$$\ $$  __$$\ 
+   $$ |      $$ |$$ /  $$ |$$ / $$ / $$ |$$ /  $$ |$$ |  \__|$$ /  $$ |
+   $$ |      $$ |$$ |  $$ |$$ | $$ | $$ |$$ |  $$ |$$ |      $$ |  $$ |
+   $$ |      $$ |$$$$$$$  |$$ | $$ | $$ |\$$$$$$  |$$ |      $$$$$$$  |
+   \__|      \__|$$  ____/ \__| \__| \__| \______/ \__|      $$  ____/ 
+                 $$ |                                        $$ |      
+                 $$ |                                        $$ |      
+                 \__|                                        \__|                                                                                                       
 """
 
 def menu_interativo():
@@ -341,6 +446,7 @@ def menu_interativo():
         print("Selecione o tipo de entidade que deseja investigar:")
         print("  [ 1 ] Pessoa Física (Busca por Nome)")
         print("  [ 2 ] Empresa (Busca por CNPJ)")
+        print("  [ 3 ] Redes Sociais (Busca por Nome de Usuário)")
         print("  [ 0 ] Sair")
         
         escolha = input("\n> Digite o número da sua escolha: ").strip()
@@ -357,6 +463,12 @@ def menu_interativo():
                 pipeline_osint_empresa(cnpj)
             else:
                 print("[-] O CNPJ não pode ser vazio.")
+        elif escolha == '3':
+            usuario = input("\n> Digite o nome de usuário (ex: 'johndoe'): ").strip()
+            if usuario:
+                pipeline_osint_usuario(usuario)
+            else:
+                print("[-] O nome de usuário não pode ser vazio.")
         elif escolha == '0':
             print("\nSaindo do sistema. Até a próxima investigação! 👋")
             break
@@ -365,7 +477,7 @@ def menu_interativo():
             continue
         
         # Após qualquer pesquisa concluída, pergunta se quer continuar
-        nova = input("\n🔄 Deseja fazer uma nova pesquisa? (s/n): ").strip().lower()
+        nova = input("\nDeseja fazer uma nova pesquisa? (s/n): ").strip().lower()
         if nova != 's':
             print("\nEncerrando o sistema. Até a próxima investigação! 👋")
             break
@@ -380,14 +492,17 @@ if __name__ == "__main__":
         parser = argparse.ArgumentParser(description="Executar PoC do Pipeline OSINT")
         parser.add_argument("--pessoa", type=str, help="Nome da pessoa a pesquisar")
         parser.add_argument("--cnpj", type=str, help="CNPJ da empresa a pesquisar (apenas números)")
+        parser.add_argument("--usuario", type=str, help="Nome de usuário para buscar nas redes sociais")
         args = parser.parse_args()
         
         if args.pessoa:
             pipeline_osint_pessoa(args.pessoa)
         elif args.cnpj:
             pipeline_osint_empresa(args.cnpj)
+        elif args.usuario:
+            pipeline_osint_usuario(args.usuario)
         else:
-            print("Por favor, forneça --pessoa 'Nome' ou --cnpj 'Numero'")
+            print("Por favor, forneça --pessoa 'Nome', --cnpj 'Numero' ou --usuario 'Username'")
     else:
         # Se nenhum argumento foi passado, abre o modo interativo
         menu_interativo()
