@@ -20,7 +20,9 @@ from src.database.modelos import Pessoa, RelacaoEntidade, DadosBrutos
 def coletar_dados_pessoa(nome_pessoa: str) -> str:
     print(f"[*] Iniciando coleta para a pessoa: {nome_pessoa}")
     coletor = ColetorAcademico()
-    texto = coletor.buscar_pessoa(nome_pessoa)
+    resultado = coletor.buscar_pessoa(nome_pessoa)
+    # buscar_pessoa retorna um Dict; extrai o texto consolidado para o pipeline
+    texto = resultado.get('texto_para_pipeline', '') if isinstance(resultado, dict) else str(resultado)
     return texto
 
 @task(retries=2, retry_delay_seconds=5)
